@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      String   @default("PHARMACIST")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Medicine {
+  id               String   @id @default(cuid())
+  name             String
+  sku              String   @unique
+  quantity         Int      @default(0)
+  reorderThreshold Int      @default(10)
+  unitPrice        Decimal  @db.Decimal(10, 2)
+  expiryDate       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  supplierId       String?
+  supplier         Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  stockMovements   StockMovement[]
+}
+
+model Supplier {
+  id        String     @id @default(cuid())
+  name      String
+  email     String?
+  phone     String?
+  createdAt DateTime   @default(now())
+  medicines Medicine[]
+}
+
+model StockMovement {
+  id         String   @id @default(cuid())
+  medicineId String
+  quantity   Int
+  type       String
+  note       String?
+  createdAt  DateTime @default(now())
+  medicine   Medicine @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+}
