@@ -82,6 +82,8 @@ export interface StockMovement {
     id: string;
     name: string;
     sku: string;
+    unitPrice?: number | string;
+    quantity?: number;
   };
 }
 

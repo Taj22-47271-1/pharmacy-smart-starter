@@ -74,6 +74,7 @@ export class StockMovementsService {
             name: true,
             sku: true,
             quantity: true,
+            unitPrice: true,
           },
         },
       },
