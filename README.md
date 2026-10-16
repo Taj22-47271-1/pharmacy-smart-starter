@@ -114,9 +114,15 @@ npm test
 
 ## 8. Live Demonstration Guide (For Interview Review)
 
-1. **Executive Overview (▦):** Show key metrics (Inventory value, active SKUs, monthly trends).
-2. **Products Catalog (📦):** Filter by categories (Antibiotics, Pain Relievers, etc.), search by name/SKU, and test CSV export.
-3. **Transaction Safety:** Click `- Dispense` on an item and enter an excessive quantity to demonstrate the strict transaction rejection of negative stock.
-4. **Smart Reorder Assistant (⚡):** Show the explainable heuristic cards, priority classification, and execute a 1-click restock.
-5. **Suppliers Directory (👥):** Display partner manufacturers and create a new supplier.
-6. **Authentication:** Click `Logout` in the sidebar and log back in with `admin@pharmly.com` / `admin123`.
+1. **Public Landing / Home Page:** When logged out, demonstrate the modern landing page highlighting assessment pillars and the `⚡ 1-Click Instant Demo Login`.
+2. **Executive Overview (▦):** Show key metrics (Inventory value, active SKUs, monthly trends).
+3. **Products Catalog (📦):** 
+   - Filter by categories (Antibiotics, Pain Relievers, etc.) and filter pills (All, In Stock, Low Stock, Out of Stock).
+   - Test client-side pagination (`‹ 1 2 3 ›`) and search.
+   - Click `👁️ Details` on any product to open the Diagnostics Modal with supplier contact info.
+   - Click `🗑️ Delete` to demonstrate the custom in-app cascade deletion modal with transaction safety.
+   - Test CSV export (`↑ Export`).
+4. **Transaction Safety (Strict Negative Balance Prevention):** Click `📦 Stock In / Dispense` on an item, switch to `Stock OUT`, and enter an excessive quantity to demonstrate the real-time UI safeguard and backend transaction rollback.
+5. **Smart Reorder Assistant (⚡):** Show the explainable heuristic cards, priority classification (`CRITICAL`, `HIGH`, `MODERATE`), and execute a 1-click replenishment.
+6. **Suppliers Directory (👥):** Display partner manufacturers (Square, Beximco, Incepta) and register a new supplier.
+7. **Authentication:** Click `Logout` in the sidebar to return to the landing page, then sign in with demo credentials or custom register.
