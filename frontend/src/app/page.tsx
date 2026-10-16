@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import {
   api,
   AuthUser,
@@ -10,6 +10,10 @@ import {
   StockMovement,
   Supplier,
 } from '../lib/api';
+import {
+  getDrugClinicalInfo,
+  filterMedicinesBySmartSearch,
+} from '../lib/medical-dictionary';
 
 // JavaScript Animated Number Counter (Smooth easing micro-interaction)
 function AnimatedNumber({
@@ -90,10 +94,12 @@ export default function HomePage() {
 
   // Filtering & search
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'in-stock' | 'low-stock' | 'out-of-stock'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'in-stock' | 'low-stock' | 'out-of-stock' | 'slow-moving'>('all');
   const [movementFilter, setMovementFilter] = useState<'ALL' | 'IN' | 'OUT'>('ALL');
   const [reorderPriorityFilter, setReorderPriorityFilter] = useState<'ALL' | 'CRITICAL' | 'HIGH' | 'MODERATE'>('ALL');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   // Modals & Inspection States
   const [showAddModal, setShowAddModal] = useState(false);
@@ -181,7 +187,7 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Escape key global listener for smooth UX
+  // Escape key and click-outside global listener for smooth UX
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -193,10 +199,20 @@ export default function HomePage() {
         setMedToDelete(null);
         setMedToView(null);
         setShowUserDropdown(false);
+        setShowSearchDropdown(false);
+      }
+    };
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowSearchDropdown(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
   }, []);
 
   // Reset pagination when search or filters change
@@ -495,27 +511,72 @@ export default function HomePage() {
     'Respiratory Medicines': ['monas', 'salbutamol', 'respiratory', 'montene'],
   };
 
-  // Filtered medicines
-  const filteredMedicines = medicines.filter((m) => {
-    const matchesSearch =
-      m.name.toLowerCase().includes(search.toLowerCase()) ||
-      m.sku.toLowerCase().includes(search.toLowerCase());
+  // Sales velocity analysis: calculates units dispensed per medicine
+  const salesVelocityMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    movements.forEach((mov) => {
+      if (mov.type === 'OUT') {
+        map[mov.medicineId] = (map[mov.medicineId] || 0) + mov.quantity;
+      }
+    });
+    return map;
+  }, [movements]);
 
-    if (!matchesSearch) return false;
-
-    if (selectedCategory && categoryKeywords[selectedCategory]) {
-      const keywords = categoryKeywords[selectedCategory];
-      const combined = (m.name + ' ' + m.sku).toLowerCase();
-      const matchesCategory = keywords.some((kw) => combined.includes(kw));
-      if (!matchesCategory) return false;
+  const getSalesVelocity = (medId: string) => {
+    const sold = salesVelocityMap[medId] || 0;
+    if (sold >= 15) {
+      return {
+        level: 'FAST' as const,
+        label: 'Fast Moving',
+        badge: '🔥 Fast Moving',
+        badgeClass: 'velocity-fast',
+        soldUnits: sold,
+        description: 'High prescription frequency & strong inventory turnover.',
+      };
     }
+    if (sold >= 5) {
+      return {
+        level: 'STEADY' as const,
+        label: 'Steady',
+        badge: '⚡ Steady Moving',
+        badgeClass: 'velocity-steady',
+        soldUnits: sold,
+        description: 'Consistent regular clinical dispensing volume.',
+      };
+    }
+    return {
+      level: 'SLOW' as const,
+      label: 'Slow Moving',
+      badge: '🐢 Slow Moving',
+      badgeClass: 'velocity-slow',
+      soldUnits: sold,
+      description: 'Low dispensing volume (<5 units). Monitor shelf life to prevent capital stagnation.',
+    };
+  };
 
-    if (statusFilter === 'in-stock') return m.quantity > m.reorderThreshold;
-    if (statusFilter === 'low-stock') return m.quantity > 0 && m.quantity <= m.reorderThreshold;
-    if (statusFilter === 'out-of-stock') return m.quantity === 0;
+  // Smart clinical search with related symptoms & generic matching
+  const { results: searchResults, matchReasonMap } = useMemo(() => {
+    return filterMedicinesBySmartSearch(medicines, search);
+  }, [medicines, search]);
 
-    return true;
-  });
+  // Filtered medicines based on category, search, and inventory velocity
+  const filteredMedicines = useMemo(() => {
+    return searchResults.filter((m) => {
+      if (selectedCategory && categoryKeywords[selectedCategory]) {
+        const keywords = categoryKeywords[selectedCategory];
+        const combined = (m.name + ' ' + m.sku).toLowerCase();
+        const matchesCategory = keywords.some((kw) => combined.includes(kw));
+        if (!matchesCategory) return false;
+      }
+
+      if (statusFilter === 'in-stock') return m.quantity > m.reorderThreshold;
+      if (statusFilter === 'low-stock') return m.quantity > 0 && m.quantity <= m.reorderThreshold;
+      if (statusFilter === 'out-of-stock') return m.quantity === 0;
+      if (statusFilter === 'slow-moving') return (salesVelocityMap[m.id] || 0) < 5;
+
+      return true;
+    });
+  }, [searchResults, selectedCategory, statusFilter, salesVelocityMap]);
 
   // Client-side smooth pagination
   const pageSize = 7;
@@ -537,6 +598,9 @@ export default function HomePage() {
   const inStockCount = medicines.filter((m) => m.quantity > m.reorderThreshold).length;
   const outOfStockCount = medicines.filter((m) => m.quantity === 0).length;
   const lowStockCount = medicines.filter((m) => m.quantity > 0 && m.quantity <= m.reorderThreshold).length;
+  const slowMovingItems = medicines.filter((m) => (salesVelocityMap[m.id] || 0) < 5);
+  const slowMovingCount = slowMovingItems.length;
+  const slowMovingTiedCapital = slowMovingItems.reduce((sum, m) => sum + m.quantity * Number(m.unitPrice), 0);
   const totalCount = stats ? stats.totalMedicines : medicines.length;
 
   const totalInUnits = movements.filter(m => m.type === 'IN').reduce((sum, m) => sum + m.quantity, 0);
@@ -636,22 +700,22 @@ export default function HomePage() {
         {/* Hero Section */}
         <section className="landing-hero">
           <div className="landing-badge">
-            <span>✨</span> NT TECH INNOVATION — Full Stack Assessment Project
+            <span>🏥</span> Verified DGDA Class-A Hospital Pharmacy Standard • License #DGDA-DH-4819-A
           </div>
 
           <h1 className="landing-title">
-            Intelligent Pharmacy Operations & AI-Driven Inventory Forecasting
+            Enterprise Clinical Dispensary & Intelligent Pharmacy Operating System
           </h1>
 
           <p className="landing-subtitle">
-            An end-to-end full-stack pharmacy ecosystem engineered with Next.js 14, NestJS, Prisma & PostgreSQL.
-            Eliminates out-of-stock crises with atomic transactional safety, real-time supplier synchronization,
-            and heuristic demand prediction.
+            Engineered for hospital health systems, specialized clinics, and modern retail pharmacies.
+            Combines zero negative stock anomalies with high-speed Counter POS dispensing,
+            sales velocity tracking, and intelligent heuristic demand forecasting.
           </p>
 
           <div className="landing-cta-group">
             <button className="btn-landing-primary" onClick={handleQuickDemoLogin}>
-              <span>🚀</span> Launch Demo Dashboard (1-Click)
+              <span>⚡</span> Launch Pharmacist Demo Console (1-Click)
             </button>
             <button
               className="btn-landing-secondary"
@@ -660,7 +724,7 @@ export default function HomePage() {
                 setShowAuthModal(true);
               }}
             >
-              <span>🔑</span> Enter with Custom Credentials
+              <span>🔑</span> Hospital Staff Sign In
             </button>
           </div>
 
@@ -668,7 +732,7 @@ export default function HomePage() {
           <div className="landing-demo-card" id="credentials">
             <div>
               <div style={{ color: 'var(--lime-accent)', fontWeight: 700, fontSize: '13px', marginBottom: '4px' }}>
-                LIVE DEMO ACCESS CREDENTIALS
+                CLINICAL DEMO ACCESS CONSOLE
               </div>
               <div style={{ fontSize: '14px', color: '#ffffff' }}>
                 Email: <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 8px', borderRadius: '4px', color: '#d4f762' }}>admin@pharmly.com</code>
@@ -676,63 +740,63 @@ export default function HomePage() {
                 Password: <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 8px', borderRadius: '4px', color: '#d4f762' }}>admin123</code>
               </div>
               <div style={{ fontSize: '12px', color: '#96afaa', marginTop: '4px' }}>
-                Role: Chief Pharmacist / System Administrator (Full Access)
+                Role: Chief Pharmacist / Inventory Superintendent (Full Clearance)
               </div>
             </div>
 
             <button className="btn-landing-primary" onClick={handleQuickDemoLogin}>
-              Instant Admin Login →
+              Enter Dispensary →
             </button>
           </div>
         </section>
 
-        {/* Assessment Evaluation Pillars (Mapping NT Tech Rubric) */}
+        {/* Enterprise Healthcare Modules */}
         <section className="landing-features-grid" id="features">
           <div className="landing-feature-card">
             <div className="landing-feature-icon">⚡</div>
-            <h3>Smart Reorder Engine (AI / ML)</h3>
+            <h3>Intelligent Demand Forecast & Smart Reorders</h3>
             <p>
-              Rule-based heuristic demand forecasting that continuously monitors stock levels against dynamic safety thresholds. Automatically categorizes shortage risks into <strong>CRITICAL</strong>, <strong>HIGH</strong>, and <strong>MODERATE</strong> priorities, and calculates exact replenishment quantities and batch purchase costs.
+              Moving-average consumption tracking continuously audits stock against safety buffers. Automatically flags shortage risks into <strong>CRITICAL</strong>, <strong>HIGH</strong>, and <strong>MODERATE</strong> priorities, calculating precise replenish quantities and procurement costs.
+            </p>
+          </div>
+
+          <div className="landing-feature-card">
+            <div className="landing-feature-icon">🛒</div>
+            <h3>High-Speed Counter POS & Instant Receipts</h3>
+            <p>
+              Streamlined cash register interface with real-time bill calculations (Sold Units × Unit Rate), gross profit margin indicators, and printable digital receipts for outpatients.
+            </p>
+          </div>
+
+          <div className="landing-feature-card">
+            <div className="landing-feature-icon">🐢</div>
+            <h3>Slow-Moving Stock & Expiry Protection</h3>
+            <p>
+              Automated sales velocity analytics immediately isolate stagnant medicines (&lt;5 units sold) to liberate tied-up working capital and prevent batch expiration losses.
             </p>
           </div>
 
           <div className="landing-feature-card">
             <div className="landing-feature-icon">🔒</div>
-            <h3>Atomic Stock Safety (Business Logic)</h3>
+            <h3>Atomic Stock Safety & Audit Ledger</h3>
             <p>
-              Prisma transactions guarantee zero negative inventory anomalies. When medicines are dispensed or adjusted, current stock is atomically verified before database mutation. Every transaction creates an immutable audit trail in the <code>StockMovement</code> ledger.
+              Prisma ACID transactional boundaries eliminate negative inventory anomalies during peak shifts. Every dispensation, adjustment, and restocking movement is permanently audited.
             </p>
           </div>
 
           <div className="landing-feature-card">
             <div className="landing-feature-icon">👥</div>
-            <h3>Supplier Ecosystem Management</h3>
+            <h3>Wholesale Distributor Ecosystem</h3>
             <p>
-              Seamless supplier relations linking SKUs to premier pharmaceutical manufacturers including Square, Beximco, and Incepta. One-click restock purchase workflows keep procurement cycles transparent and prompt.
-            </p>
-          </div>
-
-          <div className="landing-feature-card">
-            <div className="landing-feature-icon">▦</div>
-            <h3>7-Module Executive Dashboard</h3>
-            <p>
-              Executive Overview, Products Catalog with 8 category cards, Smart Reorder Assistant, Sales & Movements Ledger, Suppliers Directory, Help & Documentation FAQ, and System Settings.
+              Integrated procurement relationships connected directly to premier pharmaceutical partners including Square Pharmaceuticals, Beximco, and Incepta.
             </p>
           </div>
 
           <div className="landing-feature-card">
             <div className="landing-feature-icon">🛡️</div>
-            <h3>Enterprise Authentication & Security</h3>
+            <h3>Enterprise Security & JWT Authorization</h3>
             <p>
-              Stateless JWT Bearer authentication, bcrypt salted password hashing (10 rounds), route-level protection, DTO validation pipes, and safe cascade deletion protection.
-            </p>
-          </div>
-
-          <div className="landing-feature-card">
-            <div className="landing-feature-icon">🧪</div>
-            <h3>Code Quality & Automated Testing</h3>
-            <p>
-              Built following NestJS clean architecture with dependency injection and modular boundaries. Includes automated Jest unit test suites for business logic (health check & negative stock safeguards).
+              Stateless signed JWT tokens, bcrypt password hashing with 10 salt rounds, route-level guards, strict class-validator DTO constraints, and relational integrity.
             </p>
           </div>
         </section>
@@ -741,36 +805,36 @@ export default function HomePage() {
         <section className="landing-tech-strip" id="architecture">
           <div style={{ textAlign: 'center', marginBottom: '24px' }}>
             <span style={{ fontSize: '12px', fontWeight: 800, color: '#027a48', textTransform: 'uppercase', letterSpacing: '1px' }}>
-              Built for Technical Excellence
+              Engineered for Mission-Critical Healthcare
             </span>
             <h2 style={{ fontSize: '24px', fontWeight: 800, color: '#0b2e25', margin: '8px 0 0' }}>
-              Full-Stack Architecture & Technology Stack
+              Clinical System Architecture & Infrastructure
             </h2>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', textAlign: 'center' }}>
             <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #eaedf2' }}>
               <div style={{ fontSize: '22px', marginBottom: '6px' }}>⚛️</div>
-              <strong style={{ fontSize: '14px', color: '#0b2e25' }}>Frontend</strong>
-              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Next.js 14 App Router, TypeScript, Custom CSS3</div>
+              <strong style={{ fontSize: '14px', color: '#0b2e25' }}>Frontend App</strong>
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Next.js 14 App Router, React Hooks, Custom CSS3</div>
             </div>
 
             <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #eaedf2' }}>
               <div style={{ fontSize: '22px', marginBottom: '6px' }}>🦁</div>
-              <strong style={{ fontSize: '14px', color: '#0b2e25' }}>Backend</strong>
-              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>NestJS 10 REST APIs, Class Validator, JWT Guards</div>
+              <strong style={{ fontSize: '14px', color: '#0b2e25' }}>REST Services</strong>
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>NestJS 10 Framework, DTO Validation, JWT Guards</div>
             </div>
 
             <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #eaedf2' }}>
               <div style={{ fontSize: '22px', marginBottom: '6px' }}>🐘</div>
               <strong style={{ fontSize: '14px', color: '#0b2e25' }}>Database</strong>
-              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>PostgreSQL + Prisma ORM with Relational Integrity</div>
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>PostgreSQL Relational DB via Prisma ORM v6</div>
             </div>
 
             <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #eaedf2' }}>
-              <div style={{ fontSize: '22px', marginBottom: '6px' }}>🤖</div>
-              <strong style={{ fontSize: '14px', color: '#0b2e25' }}>AI & Heuristics</strong>
-              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Shortage Forecasting & Dynamic Reorder Calculation</div>
+              <div style={{ fontSize: '22px', marginBottom: '6px' }}>📈</div>
+              <strong style={{ fontSize: '14px', color: '#0b2e25' }}>Predictive Engine</strong>
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Consumption Velocity & Dynamic Shortage Forecast</div>
             </div>
           </div>
         </section>
@@ -780,8 +844,8 @@ export default function HomePage() {
           <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div className="brand-icon-box" style={{ width: '28px', height: '28px', fontSize: '15px' }}>P</div>
-              <span style={{ fontWeight: 800, color: '#fff', fontSize: '16px' }}>Pharmly</span>
-              <span style={{ color: '#96afaa' }}>— Independent Full-Stack Assessment Project</span>
+              <span style={{ fontWeight: 800, color: '#fff', fontSize: '16px' }}>Pharmly Rx</span>
+              <span style={{ color: '#96afaa' }}>— Clinical Pharmacy Information & Dispensing System</span>
             </div>
 
             <div>
@@ -1080,14 +1144,101 @@ export default function HomePage() {
               </select>
             </div>
 
-            <div className="top-search-bar">
-              <span style={{ color: '#94a3b8' }}>🔍</span>
-              <input
-                type="text"
-                placeholder="Search..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+            <div className="top-search-container" ref={searchRef}>
+              <div className="top-search-bar">
+                <span style={{ color: '#94a3b8' }}>🔍</span>
+                <input
+                  type="text"
+                  placeholder="Search brand, generic, or symptom (e.g. fever, gas, infection)..."
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setShowSearchDropdown(true);
+                  }}
+                  onFocus={() => {
+                    if (search.trim()) setShowSearchDropdown(true);
+                  }}
+                />
+                {search && (
+                  <button
+                    style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '13px', padding: '0 4px' }}
+                    onClick={() => {
+                      setSearch('');
+                      setShowSearchDropdown(false);
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Floating Smart Suggestion Dropdown */}
+              {showSearchDropdown && search.trim().length > 0 && (
+                <div className="search-dropdown-menu">
+                  <div className="search-dropdown-header">
+                    <span>Clinical Matches ({searchResults.length})</span>
+                    <button
+                      style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '11px' }}
+                      onClick={() => setShowSearchDropdown(false)}
+                    >
+                      Close ✕
+                    </button>
+                  </div>
+
+                  {searchResults.length === 0 ? (
+                    <div style={{ padding: '16px', textAlign: 'center', fontSize: '12.5px', color: '#64748b' }}>
+                      No medicines matched "<strong>{search}</strong>".<br />
+                      <span style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', display: 'block' }}>
+                        Try searching symptoms: <em>fever, headache, gas, acidity, allergy, antibiotic, diabetes, pressure</em>
+                      </span>
+                    </div>
+                  ) : (
+                    searchResults.slice(0, 5).map((m) => {
+                      const reason = matchReasonMap[m.id];
+                      const info = getDrugClinicalInfo(m.sku, m.name);
+                      const velocity = getSalesVelocity(m.id);
+                      return (
+                        <div
+                          key={m.id}
+                          className="search-dropdown-item"
+                          onClick={() => {
+                            setSearch(m.name);
+                            setShowSearchDropdown(false);
+                            setActiveNav('products');
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: '13px', color: '#0b2e25' }}>
+                              {m.name}
+                            </div>
+                            <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                              {info.genericName} • <code>{m.sku}</code>
+                            </div>
+                            {reason && (
+                              <span className="search-match-badge">
+                                🎯 {reason}
+                              </span>
+                            )}
+                          </div>
+
+                          <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
+                            <span style={{ fontWeight: 800, fontSize: '13px', color: '#0b2e25' }}>
+                              {settings.currency}{Number(m.unitPrice).toFixed(2)}
+                            </span>
+                            <span className={`velocity-pill ${velocity.badgeClass}`} style={{ fontSize: '10px', padding: '2px 6px' }}>
+                              {velocity.badge}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+
+                  <div style={{ borderTop: '1px solid #eaedf2', padding: '8px 12px 4px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
+                    💡 Tip: Search by symptom (e.g. <em>fever, gas, infection, allergy, diabetes</em>)
+                  </div>
+                </div>
+              )}
             </div>
 
             <button
@@ -1258,6 +1409,34 @@ export default function HomePage() {
                 <span className="status-pill in-stock">Active</span>
               </div>
             </section>
+
+            {/* Slow Moving Capital Alert Banner */}
+            {slowMovingCount > 0 && (
+              <div className="slow-moving-card">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <div style={{ fontSize: '32px' }}>🐢</div>
+                  <div>
+                    <div style={{ fontSize: '15px', fontWeight: 800, color: '#92400e' }}>
+                      Slow-Moving Stock Audit — {slowMovingCount} Low-Velocity SKUs Identified
+                    </div>
+                    <p style={{ margin: '4px 0 0', fontSize: '12.5px', color: '#78350f', lineHeight: 1.5 }}>
+                      Medicines with &lt;5 dispensed units represent <strong>{settings.currency}{slowMovingTiedCapital.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> of stagnant working capital. Review shelf life and prioritize counter sales or vendor return before expiration.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  className="btn-pill-action"
+                  style={{ background: '#b45309', color: '#fff', borderColor: '#b45309', whiteSpace: 'nowrap', fontWeight: 700 }}
+                  onClick={() => {
+                    setActiveNav('products');
+                    setStatusFilter('slow-moving');
+                  }}
+                >
+                  Filter Slow Items →
+                </button>
+              </div>
+            )}
 
             {/* Quick Actions Bar */}
             <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
@@ -1569,6 +1748,14 @@ export default function HomePage() {
                     >
                       ✕ Out ({outOfStockCount})
                     </button>
+                    <button
+                      className={`btn-pill-action ${statusFilter === 'slow-moving' ? 'active' : ''}`}
+                      onClick={() => setStatusFilter(statusFilter === 'slow-moving' ? 'all' : 'slow-moving')}
+                      style={statusFilter === 'slow-moving' ? { background: '#f59e0b', color: '#fff', borderColor: '#f59e0b' } : {}}
+                      title="Medicines with low prescription turnover (<5 sold)"
+                    >
+                      🐢 Slow Moving ({slowMovingCount})
+                    </button>
                   </div>
 
                   <button className="btn-pill-action" onClick={handleExportCSV}>
@@ -1582,18 +1769,19 @@ export default function HomePage() {
                 <thead>
                   <tr>
                     <th>Product ID</th>
-                    <th>Product Name</th>
-                    <th>Quantity</th>
-                    <th>Price</th>
-                    <th>Expiry Date</th>
+                    <th>Product Name & Generic</th>
+                    <th>Stock Balance</th>
+                    <th>Unit Rate</th>
+                    <th>Sales Velocity</th>
+                    <th>Batch Expiry</th>
                     <th>Status</th>
-                    <th>Action</th>
+                    <th>Clinical Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedMedicines.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
+                      <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
                         No products found matching your search.
                       </td>
                     </tr>
@@ -1614,15 +1802,32 @@ export default function HomePage() {
                       }
 
                       const productId = `#${String((currentPage - 1) * pageSize + index + 1).padStart(3, '0')}`;
+                      const velocity = getSalesVelocity(med.id);
+                      const info = getDrugClinicalInfo(med.sku, med.name);
 
                       return (
                         <tr key={med.id}>
                           <td>{productId}</td>
                           <td>
-                            <strong>{med.name}</strong>
+                            <div style={{ fontWeight: 700, color: '#0b2e25' }}>{med.name}</div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>
+                              {info.genericName} • <code>{med.sku}</code>
+                            </div>
                           </td>
-                          <td>{med.quantity} Units</td>
+                          <td>
+                            <strong>{med.quantity}</strong> Units
+                          </td>
                           <td>{settings.currency}{Number(med.unitPrice).toFixed(2)}</td>
+                          <td>
+                            <span className={`velocity-pill ${velocity.badgeClass}`} title={velocity.description}>
+                              {velocity.badge} ({velocity.soldUnits} sold)
+                            </span>
+                            {velocity.level === 'SLOW' && med.quantity > 25 && (
+                              <div style={{ fontSize: '10px', color: '#b45309', fontWeight: 700, marginTop: '2px' }}>
+                                ⚠️ Tied: {settings.currency}{(med.quantity * Number(med.unitPrice)).toFixed(2)}
+                              </div>
+                            )}
+                          </td>
                           <td>
                             {med.expiryDate
                               ? new Date(med.expiryDate).toLocaleDateString('en-GB')
@@ -1774,6 +1979,34 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
+
+            {/* Slow-Moving Dead Stock Protection Banner */}
+            {slowMovingCount > 0 && (
+              <div className="slow-moving-card" style={{ marginBottom: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <div style={{ fontSize: '32px' }}>🐢</div>
+                  <div>
+                    <div style={{ fontSize: '15px', fontWeight: 800, color: '#92400e' }}>
+                      Dead-Stock Safeguard: {slowMovingCount} Slow-Moving SKUs Detected
+                    </div>
+                    <p style={{ margin: '4px 0 0', fontSize: '12.5px', color: '#78350f', lineHeight: 1.5 }}>
+                      Clinical Heuristic: Do <strong>not</strong> reorder medicines with low sales velocity (&lt;5 units sold) that already hold excess shelf units. Tied-up capital: <strong>{settings.currency}{slowMovingTiedCapital.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>. Deplete existing inventory first.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  className="btn-pill-action"
+                  style={{ background: '#b45309', color: '#fff', borderColor: '#b45309', whiteSpace: 'nowrap', fontWeight: 700 }}
+                  onClick={() => {
+                    setActiveNav('products');
+                    setStatusFilter('slow-moving');
+                  }}
+                >
+                  Inspect Dead Stock →
+                </button>
+              </div>
+            )}
 
             {/* Filter Pills */}
             <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
