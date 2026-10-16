@@ -11,6 +11,60 @@ import {
   Supplier,
 } from '../lib/api';
 
+// JavaScript Animated Number Counter (Smooth easing micro-interaction)
+function AnimatedNumber({
+  value,
+  prefix = '',
+  suffix = '',
+  decimals = 0,
+}: {
+  value: number;
+  prefix?: string;
+  suffix?: string;
+  decimals?: number;
+}) {
+  const [displayValue, setDisplayValue] = useState(0);
+
+  useEffect(() => {
+    const end = Number(value) || 0;
+    const start = displayValue;
+    if (start === end) return;
+
+    const duration = 650; // ms
+    const startTime = performance.now();
+    let animationFrameId: number;
+
+    const updateNumber = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // smooth easeOutExpo
+      const ease = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+      const current = start + (end - start) * ease;
+      setDisplayValue(current);
+
+      if (progress < 1) {
+        animationFrameId = requestAnimationFrame(updateNumber);
+      } else {
+        setDisplayValue(end);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(updateNumber);
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [value]);
+
+  return (
+    <span className="animated-num">
+      {prefix}
+      {displayValue.toLocaleString('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      })}
+      {suffix}
+    </span>
+  );
+}
+
 export default function HomePage() {
   // Navigation: 7 primary views
   const [activeNav, setActiveNav] = useState<
@@ -91,14 +145,41 @@ export default function HomePage() {
     phone: '',
   });
 
-  // Settings state (Persisted in localStorage)
+  // Settings state (Persisted in localStorage with default BDT ৳)
   const [settings, setSettings] = useState({
     pharmacyName: 'Pharmly Central Hospital Pharmacy',
     licenseNo: 'DGDA-DH-4819-A',
-    currency: '$',
+    currency: '৳',
     defaultThreshold: 20,
     emailAlerts: true,
   });
+
+  const updateSettings = (newSettings: typeof settings) => {
+    setSettings(newSettings);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pharmly_settings', JSON.stringify(newSettings));
+    }
+  };
+
+  // Live Clock & System Synchronizer (JavaScript animation / ticker)
+  const [liveTime, setLiveTime] = useState('');
+
+  useEffect(() => {
+    const updateClock = () => {
+      const now = new Date();
+      setLiveTime(
+        now.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        })
+      );
+    };
+    updateClock();
+    const interval = setInterval(updateClock, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Escape key global listener for smooth UX
   useEffect(() => {
@@ -131,7 +212,12 @@ export default function HomePage() {
 
     if (cachedSettings) {
       try {
-        setSettings(JSON.parse(cachedSettings));
+        const parsed = JSON.parse(cachedSettings);
+        // Default to BDT ৳ unless specifically altered
+        if (!parsed.currency || parsed.currency === '$') {
+          parsed.currency = '৳';
+        }
+        setSettings(parsed);
       } catch {}
     }
 
@@ -968,6 +1054,32 @@ export default function HomePage() {
           </div>
 
           <div className="header-actions">
+            {/* Live Clock & Health Indicator */}
+            <div className="header-clock-pill" title="Live System Time & Sync Status">
+              <span className="live-indicator-dot" />
+              <span>LIVE {liveTime || '12:00:00 PM'}</span>
+            </div>
+
+            {/* Quick Currency Switcher Pill (Default: ৳ BDT) */}
+            <div className="header-currency-pill" title="Active Currency (Default: ৳ BDT)">
+              <span className="currency-pill-icon">{settings.currency}</span>
+              <select
+                className="header-currency-select"
+                value={settings.currency}
+                onChange={(e) => {
+                  const newCurr = e.target.value;
+                  updateSettings({ ...settings, currency: newCurr });
+                  showToast(`System currency updated to ${newCurr}!`);
+                }}
+              >
+                <option value="৳">৳ BDT</option>
+                <option value="$">$ USD</option>
+                <option value="€">€ EUR</option>
+                <option value="£">£ GBP</option>
+                <option value="₹">₹ INR</option>
+              </select>
+            </div>
+
             <div className="top-search-bar">
               <span style={{ color: '#94a3b8' }}>🔍</span>
               <input
@@ -1090,7 +1202,11 @@ export default function HomePage() {
                   <div className="metric-details">
                     <div className="metric-label">Total Inventory Value</div>
                     <div className="metric-number">
-                      {settings.currency}{stats ? stats.totalStockValue.toLocaleString() : '1,606'}
+                      <AnimatedNumber
+                        value={stats ? stats.totalStockValue : 1606}
+                        prefix={settings.currency}
+                        decimals={2}
+                      />
                     </div>
                   </div>
                 </div>
@@ -1104,7 +1220,9 @@ export default function HomePage() {
                   </div>
                   <div className="metric-details">
                     <div className="metric-label">Active Medicine SKUs</div>
-                    <div className="metric-number">{totalCount} Items</div>
+                    <div className="metric-number">
+                      <AnimatedNumber value={totalCount} suffix=" Items" />
+                    </div>
                   </div>
                 </div>
                 <span className="status-pill info">100% Synced</span>
@@ -1117,7 +1235,9 @@ export default function HomePage() {
                   </div>
                   <div className="metric-details">
                     <div className="metric-label">Restock Recommended</div>
-                    <div className="metric-number">{lowStockCount}</div>
+                    <div className="metric-number">
+                      <AnimatedNumber value={lowStockCount} />
+                    </div>
                   </div>
                 </div>
                 <span className="status-pill low-stock">{outOfStockCount} Out of Stock</span>
@@ -1130,7 +1250,9 @@ export default function HomePage() {
                   </div>
                   <div className="metric-details">
                     <div className="metric-label">Partner Manufacturers</div>
-                    <div className="metric-number">{suppliers.length}</div>
+                    <div className="metric-number">
+                      <AnimatedNumber value={suppliers.length} />
+                    </div>
                   </div>
                 </div>
                 <span className="status-pill in-stock">Active</span>
@@ -1333,7 +1455,9 @@ export default function HomePage() {
                       <button className="three-dots-btn">⋮</button>
                     </div>
 
-                    <div className="cat-count">{cat.count}</div>
+                    <div className="cat-count">
+                      <AnimatedNumber value={cat.count} />
+                    </div>
 
                     <div className="cat-bottom">
                       <span className={`cat-trend ${cat.trendType}`}>
@@ -1750,7 +1874,11 @@ export default function HomePage() {
                   <div className="metric-details">
                     <div className="metric-label">Total Dispensed Revenue</div>
                     <div className="metric-number">
-                      {settings.currency}{totalSalesRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      <AnimatedNumber
+                        value={totalSalesRevenue}
+                        prefix={settings.currency}
+                        decimals={2}
+                      />
                     </div>
                   </div>
                 </div>
@@ -1764,7 +1892,9 @@ export default function HomePage() {
                   </div>
                   <div className="metric-details">
                     <div className="metric-label">Total Units Dispensed</div>
-                    <div className="metric-number">-{totalOutUnits} Units</div>
+                    <div className="metric-number">
+                      -<AnimatedNumber value={totalOutUnits} suffix=" Units" />
+                    </div>
                   </div>
                 </div>
                 <span className="status-pill info">Patient Sales</span>
@@ -1778,7 +1908,11 @@ export default function HomePage() {
                   <div className="metric-details">
                     <div className="metric-label">Estimated Gross Profit</div>
                     <div className="metric-number">
-                      +{settings.currency}{estimatedGrossProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      +<AnimatedNumber
+                        value={estimatedGrossProfit}
+                        prefix={settings.currency}
+                        decimals={2}
+                      />
                     </div>
                   </div>
                 </div>
@@ -1792,7 +1926,13 @@ export default function HomePage() {
                   </div>
                   <div className="metric-details">
                     <div className="metric-label">Avg. Basket / Ticket</div>
-                    <div className="metric-number">{settings.currency}{avgOrderValue}</div>
+                    <div className="metric-number">
+                      <AnimatedNumber
+                        value={Number(avgOrderValue)}
+                        prefix={settings.currency}
+                        decimals={2}
+                      />
+                    </div>
                   </div>
                 </div>
                 <span className="status-pill low-stock">Per Dispense</span>
@@ -2224,7 +2364,8 @@ export default function HomePage() {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                showToast('Settings saved successfully!');
+                updateSettings(settings);
+                showToast(`Settings & currency (${settings.currency}) saved successfully!`);
               }}
             >
               <div className="form-item">
@@ -2247,15 +2388,21 @@ export default function HomePage() {
                 </div>
 
                 <div className="form-item">
-                  <label>Currency Format</label>
+                  <label>Default Currency Format (Default: ৳ BDT)</label>
                   <select
                     value={settings.currency}
-                    onChange={(e) => setSettings({ ...settings, currency: e.target.value })}
+                    onChange={(e) => {
+                      const newCurr = e.target.value;
+                      const updated = { ...settings, currency: newCurr };
+                      updateSettings(updated);
+                      showToast(`Currency changed to ${newCurr}`);
+                    }}
                   >
-                    <option value="$">USD ($)</option>
-                    <option value="৳">BDT (৳)</option>
-                    <option value="€">EUR (€)</option>
-                    <option value="£">GBP (£)</option>
+                    <option value="৳">৳ BDT (Bangladeshi Taka — Default)</option>
+                    <option value="$">$ USD (US Dollar)</option>
+                    <option value="€">€ EUR (Euro)</option>
+                    <option value="£">£ GBP (British Pound)</option>
+                    <option value="₹">₹ INR (Indian Rupee)</option>
                   </select>
                 </div>
               </div>

@@ -339,6 +339,32 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   box-shadow: 0 1px 3px rgba(16, 24, 40, 0.04);
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 14px 28px -6px rgba(11, 46, 37, 0.09), 0 4px 8px -2px rgba(16, 24, 40, 0.03);
+  border-color: #b8e0d2;
+}
+
+.metric-card::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #10b981 0%, #d4f762 100%);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.metric-card:hover::after {
+  transform: scaleX(1);
 }
 
 .metric-card-left {
@@ -355,6 +381,11 @@ button:disabled {
   align-items: center;
   justify-content: center;
   font-size: 22px;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.metric-card:hover .metric-icon-box {
+  transform: scale(1.08) rotate(2deg);
 }
 
 .metric-icon-box.green-bg { background: #eef8f3; color: #0b2e25; }
@@ -400,13 +431,14 @@ button:disabled {
   padding: 20px;
   position: relative;
   box-shadow: 0 1px 3px rgba(16, 24, 40, 0.03);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease;
   cursor: pointer;
 }
 
 .category-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 14px rgba(16, 24, 40, 0.06);
+  transform: translateY(-4px) scale(1.012);
+  box-shadow: 0 12px 24px -4px rgba(11, 46, 37, 0.1);
+  border-color: #b8e0d2;
 }
 
 .category-card.card-highlight-dark {
@@ -533,11 +565,18 @@ button:disabled {
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 2px 4px rgba(11, 46, 37, 0.08);
 }
 
 .btn-add-product:hover {
   background: var(--lime-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(11, 46, 37, 0.18);
+}
+
+.btn-add-product:active {
+  transform: translateY(0);
 }
 
 .btn-pill-action {
@@ -552,17 +591,21 @@ button:disabled {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .btn-pill-action:hover {
-  background: #f8fafc;
+  background: #edf9f4;
+  color: #0b2e25;
+  border-color: #b8e0d2;
+  transform: translateY(-1px);
 }
 
 .btn-pill-action.active {
   background: #0b2e25;
   color: #fff;
   border-color: #0b2e25;
+  box-shadow: 0 2px 8px rgba(11, 46, 37, 0.2);
 }
 
 /* Modern Rounded Table */
@@ -700,16 +743,34 @@ button:disabled {
 .page-num-btn.active { background: #0b2e25; color: #ffffff; border-color: #0b2e25; }
 
 /* Modal Styling */
+@keyframes fadeInBackdrop {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalPopIn {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(11, 46, 37, 0.45);
-  backdrop-filter: blur(3px);
+  background: rgba(11, 46, 37, 0.48);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 999;
   padding: 20px;
+  animation: fadeInBackdrop 0.2s ease-out;
 }
 
 .modal-content-box {
@@ -718,13 +779,9 @@ button:disabled {
   width: 100%;
   max-width: 540px;
   overflow: hidden;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  animation: slideUp 0.15s ease-out;
-}
-
-@keyframes slideUp {
-  from { transform: translateY(12px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  box-shadow: 0 25px 50px -12px rgba(11, 46, 37, 0.25), 0 10px 20px -5px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  animation: modalPopIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .modal-header-bar {
@@ -1356,5 +1413,161 @@ button:disabled {
   border: 1px solid #eaedf2;
   margin: 16px 0;
 }
+
+/* Header Live Clock & Status Pill */
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.7);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(1.2);
+    box-shadow: 0 0 14px rgba(16, 185, 129, 0.9);
+  }
+}
+
+.header-clock-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #edf9f4;
+  border: 1px solid #b8e0d2;
+  color: #0b2e25;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 999px;
+  box-shadow: 0 1px 3px rgba(11, 46, 37, 0.05);
+  letter-spacing: -0.2px;
+}
+
+.live-indicator-dot {
+  width: 8px;
+  height: 8px;
+  background-color: #10b981;
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulseGlow 2s infinite ease-in-out;
+}
+
+/* Header Quick Currency Switcher */
+.header-currency-pill {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  padding: 4px 12px 4px 6px;
+  gap: 6px;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.04);
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+
+.header-currency-pill:hover {
+  border-color: #b8e0d2;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(11, 46, 37, 0.08);
+}
+
+.currency-pill-icon {
+  font-size: 13px;
+  font-weight: 800;
+  color: #0b2e25;
+  background: var(--lime-accent);
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+}
+
+.header-currency-pill:hover .currency-pill-icon {
+  transform: rotate(12deg) scale(1.05);
+}
+
+.header-currency-select {
+  border: none;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #0b2e25;
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+}
+
+/* Animated Number Ticker */
+.animated-num {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.2s ease;
+}
+
+/* Sales Chart Rise Animation */
+@keyframes barRise {
+  from {
+    transform: scaleY(0);
+    opacity: 0.2;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.sales-bar-revenue,
+.sales-bar-profit,
+.sales-bar-forecast {
+  transform-origin: bottom;
+  animation: barRise 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Stepper buttons hover */
+.pos-stepper-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.pos-stepper-btn:hover {
+  background: #0b2e25;
+  color: #ffffff;
+  border-color: #0b2e25;
+  transform: scale(1.08);
+}
+
+.pos-stepper-btn:active {
+  transform: scale(0.96);
+}
+
+/* Modern thin emerald scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #0b2e25;
+}
+
 
 
