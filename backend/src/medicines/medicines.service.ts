@@ -108,8 +108,13 @@ export class MedicinesService {
 
   async remove(id: string) {
     await this.findOne(id);
-    return this.prisma.medicine.delete({
-      where: { id },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.stockMovement.deleteMany({
+        where: { medicineId: id },
+      });
+      return tx.medicine.delete({
+        where: { id },
+      });
     });
   }
 
