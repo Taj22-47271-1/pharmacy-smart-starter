@@ -29,6 +29,10 @@
   box-sizing: border-box;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -36,6 +40,12 @@ body {
   background-color: var(--bg-main);
   color: var(--text-dark);
   -webkit-font-smoothing: antialiased;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed !important;
+  transform: none !important;
 }
 
 /* Master App Layout: Sidebar + Main Content */

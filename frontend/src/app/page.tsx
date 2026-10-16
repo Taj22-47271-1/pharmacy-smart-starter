@@ -41,7 +41,7 @@ export default function HomePage() {
   const [reorderPriorityFilter, setReorderPriorityFilter] = useState<'ALL' | 'CRITICAL' | 'HIGH' | 'MODERATE'>('ALL');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Modals
+  // Modals & Inspection States
   const [showAddModal, setShowAddModal] = useState(false);
   const [showStockModal, setShowStockModal] = useState(false);
   const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
@@ -49,6 +49,13 @@ export default function HomePage() {
   const [stockActionType, setStockActionType] = useState<'IN' | 'OUT'>('IN');
   const [stockQty, setStockQty] = useState(10);
   const [stockNote, setStockNote] = useState('');
+
+  // Smooth in-app modal states
+  const [medToDelete, setMedToDelete] = useState<Medicine | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [medToView, setMedToView] = useState<Medicine | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Form states
   const [newProduct, setNewProduct] = useState({
@@ -67,7 +74,7 @@ export default function HomePage() {
     phone: '',
   });
 
-  // Settings state
+  // Settings state (Persisted in localStorage)
   const [settings, setSettings] = useState({
     pharmacyName: 'Pharmly Central Hospital Pharmacy',
     licenseNo: 'DGDA-DH-4819-A',
@@ -76,10 +83,39 @@ export default function HomePage() {
     emailAlerts: true,
   });
 
+  // Escape key global listener for smooth UX
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowAuthModal(false);
+        setShowAddModal(false);
+        setShowStockModal(false);
+        setShowAddSupplierModal(false);
+        setMedToDelete(null);
+        setMedToView(null);
+        setShowUserDropdown(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Reset pagination when search or filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, statusFilter, selectedCategory]);
+
   // Load auth & initial data
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('pharmly_token') : null;
     const cachedUser = typeof window !== 'undefined' ? localStorage.getItem('pharmly_user') : null;
+    const cachedSettings = typeof window !== 'undefined' ? localStorage.getItem('pharmly_settings') : null;
+
+    if (cachedSettings) {
+      try {
+        setSettings(JSON.parse(cachedSettings));
+      } catch {}
+    }
 
     if (cachedUser) {
       try {
@@ -236,16 +272,27 @@ export default function HomePage() {
     }
   };
 
-  // Delete Medicine Handler (Cascade safe + optimistic UI update)
-  const handleDelete = async (id: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to delete "${name}"?`)) return;
+  // Delete Medicine Triggers (Smooth In-App Confirmation Modal)
+  const handleDelete = (id: string, name: string) => {
+    const med = medicines.find((m) => m.id === id);
+    if (med) {
+      setMedToDelete(med);
+    }
+  };
+
+  const confirmDeleteProduct = async () => {
+    if (!medToDelete) return;
+    setIsDeleting(true);
     try {
-      await api.deleteMedicine(id);
-      setMedicines((prev) => prev.filter((m) => m.id !== id));
-      showToast(`Product "${name}" deleted successfully.`);
+      await api.deleteMedicine(medToDelete.id);
+      setMedicines((prev) => prev.filter((m) => m.id !== medToDelete.id));
+      showToast(`Product "${medToDelete.name}" deleted successfully.`);
+      setMedToDelete(null);
       loadData();
     } catch (err: any) {
       showToast(`Failed to delete: ${err.message}`);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -287,6 +334,18 @@ export default function HomePage() {
     showToast('Exported inventory to CSV successfully!');
   };
 
+  // Category keywords for smooth filtering
+  const categoryKeywords: Record<string, string[]> = {
+    'Antibiotics': ['zimax', 'azithromycin', 'cipro', 'amox', 'cefixime'],
+    'Pain Relievers': ['napa', 'paracetamol', 'ace', 'pain', 'ibuprofen'],
+    'Vitamins & Supplements': ['vitamin', 'zinc', 'calcium', 'b-complex'],
+    'Antiviral Drugs': ['antiviral', 'acyclovir', 'oseltamivir'],
+    'Diabetes Care': ['metformin', 'insulin', 'gliclazide'],
+    'Cardiovascular': ['seclo', 'omeprazole', 'atorvastatin', 'losartan'],
+    'Allergy Medication': ['fexo', 'fexofenadine', 'allergy', 'histacin'],
+    'Respiratory Medicines': ['monas', 'salbutamol', 'respiratory', 'montene'],
+  };
+
   // Filtered medicines
   const filteredMedicines = medicines.filter((m) => {
     const matchesSearch =
@@ -295,12 +354,24 @@ export default function HomePage() {
 
     if (!matchesSearch) return false;
 
+    if (selectedCategory && categoryKeywords[selectedCategory]) {
+      const keywords = categoryKeywords[selectedCategory];
+      const combined = (m.name + ' ' + m.sku).toLowerCase();
+      const matchesCategory = keywords.some((kw) => combined.includes(kw));
+      if (!matchesCategory) return false;
+    }
+
     if (statusFilter === 'in-stock') return m.quantity > m.reorderThreshold;
     if (statusFilter === 'low-stock') return m.quantity > 0 && m.quantity <= m.reorderThreshold;
     if (statusFilter === 'out-of-stock') return m.quantity === 0;
 
     return true;
   });
+
+  // Client-side smooth pagination
+  const pageSize = 7;
+  const totalPages = Math.ceil(filteredMedicines.length / pageSize) || 1;
+  const paginatedMedicines = filteredMedicines.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   // Filtered movements
   const filteredMovements = movements.filter((m) => {
@@ -314,8 +385,9 @@ export default function HomePage() {
     return r.priority === reorderPriorityFilter;
   }) || [];
 
+  const inStockCount = medicines.filter((m) => m.quantity > m.reorderThreshold).length;
   const outOfStockCount = medicines.filter((m) => m.quantity === 0).length;
-  const lowStockCount = stats ? stats.lowStockItems : medicines.filter((m) => m.quantity > 0 && m.quantity <= m.reorderThreshold).length;
+  const lowStockCount = medicines.filter((m) => m.quantity > 0 && m.quantity <= m.reorderThreshold).length;
   const totalCount = stats ? stats.totalMedicines : medicines.length;
 
   const totalInUnits = movements.filter(m => m.type === 'IN').reduce((sum, m) => sum + m.quantity, 0);
@@ -1140,33 +1212,79 @@ export default function HomePage() {
 
             {/* 8 Category Cards Grid */}
             <section className="categories-grid">
-              {categoryCards.map((cat) => (
-                <div
-                  key={cat.name}
-                  className={`category-card ${cat.isDark ? 'card-highlight-dark' : ''}`}
-                  onClick={() => {
-                    setSearch(cat.name === 'Antibiotics' ? 'Zimax' : '');
-                    showToast(`Filter applied: ${cat.name}`);
-                  }}
-                >
-                  <div className="cat-top">
-                    <span className="cat-title">{cat.name}</span>
-                    <button className="three-dots-btn">⋮</button>
-                  </div>
+              {categoryCards.map((cat) => {
+                const isSelected = selectedCategory === cat.name;
+                return (
+                  <div
+                    key={cat.name}
+                    className={`category-card ${isSelected ? 'card-highlight-dark' : cat.isDark && !selectedCategory ? 'card-highlight-dark' : ''}`}
+                    onClick={() => {
+                      if (isSelected) {
+                        setSelectedCategory(null);
+                        showToast('Category filter cleared.');
+                      } else {
+                        setSelectedCategory(cat.name);
+                        showToast(`Filtered by ${cat.name}`);
+                      }
+                    }}
+                  >
+                    <div className="cat-top">
+                      <span className="cat-title">{cat.name}</span>
+                      <button className="three-dots-btn">⋮</button>
+                    </div>
 
-                  <div className="cat-count">{cat.count}</div>
+                    <div className="cat-count">{cat.count}</div>
 
-                  <div className="cat-bottom">
-                    <span className={`cat-trend ${cat.trendType}`}>
-                      {cat.trendType === 'up' ? '↗' : '↘'} {cat.trend}
-                    </span>
-                    <div className={`cat-badge-icon ${cat.isDark ? 'lime' : 'light-gray'}`}>
-                      {cat.icon}
+                    <div className="cat-bottom">
+                      <span className={`cat-trend ${cat.trendType}`}>
+                        {cat.trendType === 'up' ? '↗' : '↘'} {cat.trend}
+                      </span>
+                      <div className={`cat-badge-icon ${isSelected || (cat.isDark && !selectedCategory) ? 'lime' : 'light-gray'}`}>
+                        {cat.icon}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </section>
+
+            {/* Active Category Filter Banner */}
+            {selectedCategory && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '12px 20px',
+                  background: '#edf9f4',
+                  border: '1px solid #b8e0d2',
+                  borderRadius: '14px',
+                  fontSize: '13.5px',
+                  color: '#0b2e25',
+                  marginBottom: '20px',
+                }}
+              >
+                <span>
+                  🎯 Showing category: <strong>{selectedCategory}</strong> ({filteredMedicines.length} products found)
+                </span>
+                <button
+                  style={{
+                    marginLeft: 'auto',
+                    background: '#0b2e25',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '6px 14px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => setSelectedCategory(null)}
+                >
+                  Clear Category ✕
+                </button>
+              </div>
+            )}
 
             {/* Products Table Section */}
             <section className="table-wrapper-card">
@@ -1175,7 +1293,7 @@ export default function HomePage() {
                   <span style={{ color: '#94a3b8' }}>🔍</span>
                   <input
                     type="text"
-                    placeholder="Search..."
+                    placeholder="Search medicine or SKU..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
@@ -1189,19 +1307,35 @@ export default function HomePage() {
                     <span>⊕</span> Add New Product
                   </button>
 
-                  <button
-                    className={`btn-pill-action ${statusFilter === 'all' ? 'active' : ''}`}
-                    onClick={() => setStatusFilter(statusFilter === 'all' ? 'low-stock' : 'all')}
-                  >
-                    <span>⚙</span> {statusFilter === 'all' ? 'Filters' : 'Show All'}
-                  </button>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    <button
+                      className={`btn-pill-action ${statusFilter === 'all' ? 'active' : ''}`}
+                      onClick={() => setStatusFilter('all')}
+                    >
+                      All ({totalCount})
+                    </button>
+                    <button
+                      className={`btn-pill-action ${statusFilter === 'in-stock' ? 'active' : ''}`}
+                      onClick={() => setStatusFilter('in-stock')}
+                    >
+                      In Stock ({inStockCount})
+                    </button>
+                    <button
+                      className={`btn-pill-action ${statusFilter === 'low-stock' ? 'active' : ''}`}
+                      onClick={() => setStatusFilter('low-stock')}
+                    >
+                      ⚠️ Low ({lowStockCount})
+                    </button>
+                    <button
+                      className={`btn-pill-action ${statusFilter === 'out-of-stock' ? 'active' : ''}`}
+                      onClick={() => setStatusFilter('out-of-stock')}
+                    >
+                      ✕ Out ({outOfStockCount})
+                    </button>
+                  </div>
 
                   <button className="btn-pill-action" onClick={handleExportCSV}>
                     <span>↑</span> Export
-                  </button>
-
-                  <button className="btn-pill-action">
-                    This Month <span>▾</span>
                   </button>
                 </div>
               </div>
@@ -1220,14 +1354,14 @@ export default function HomePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredMedicines.length === 0 ? (
+                  {paginatedMedicines.length === 0 ? (
                     <tr>
                       <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
                         No products found matching your search.
                       </td>
                     </tr>
                   ) : (
-                    filteredMedicines.map((med, index) => {
+                    paginatedMedicines.map((med, index) => {
                       const isOutOfStock = med.quantity === 0;
                       const isLowStock = med.quantity > 0 && med.quantity <= med.reorderThreshold;
 
@@ -1242,7 +1376,7 @@ export default function HomePage() {
                         statusText = 'low stock';
                       }
 
-                      const productId = `#${String(index + 1).padStart(3, '0')}`;
+                      const productId = `#${String((currentPage - 1) * pageSize + index + 1).padStart(3, '0')}`;
 
                       return (
                         <tr key={med.id}>
@@ -1280,9 +1414,7 @@ export default function HomePage() {
                               <button
                                 className="icon-action-btn"
                                 title="View Details"
-                                onClick={() => {
-                                  showToast(`${med.name}: ${med.quantity} units, Supplier: ${med.supplier?.name || 'Local'}`);
-                                }}
+                                onClick={() => setMedToView(med)}
                               >
                                 👁
                               </button>
@@ -1290,7 +1422,7 @@ export default function HomePage() {
                               <button
                                 className="icon-action-btn delete-btn"
                                 title="Delete Product"
-                                onClick={() => handleDelete(med.id, med.name)}
+                                onClick={() => setMedToDelete(med)}
                               >
                                 🗑
                               </button>
@@ -1306,17 +1438,34 @@ export default function HomePage() {
               {/* Table Pagination Footer */}
               <div className="table-pagination-footer">
                 <div>
-                  Showing {filteredMedicines.length} out of {totalCount}
+                  Showing {filteredMedicines.length === 0 ? 0 : (currentPage - 1) * pageSize + 1} to{' '}
+                  {Math.min(currentPage * pageSize, filteredMedicines.length)} of {filteredMedicines.length} entries
                 </div>
 
                 <div className="pagination-pages">
-                  <button className="page-num-btn">‹</button>
-                  <button className="page-num-btn active">1</button>
-                  <button className="page-num-btn">2</button>
-                  <button className="page-num-btn">3</button>
-                  <span style={{ padding: '0 4px', color: '#94a3b8' }}>...</span>
-                  <button className="page-num-btn">10</button>
-                  <button className="page-num-btn">›</button>
+                  <button
+                    className="page-num-btn"
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  >
+                    ‹
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                    <button
+                      key={page}
+                      className={`page-num-btn ${currentPage === page ? 'active' : ''}`}
+                      onClick={() => setCurrentPage(page)}
+                    >
+                      {page}
+                    </button>
+                  ))}
+                  <button
+                    className="page-num-btn"
+                    disabled={currentPage === totalPages}
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    ›
+                  </button>
                 </div>
               </div>
             </section>
@@ -2094,8 +2243,18 @@ export default function HomePage() {
                     onChange={(e) => setStockQty(Number(e.target.value))}
                   />
                   {stockActionType === 'OUT' && (
-                    <small style={{ color: '#b42318', fontSize: '11px', display: 'block', marginTop: '4px' }}>
-                      * Stock cannot be negative. Max allowed: {selectedMed.quantity}
+                    <small
+                      style={{
+                        color: stockQty > selectedMed.quantity ? '#b42318' : '#027a48',
+                        fontSize: '12px',
+                        display: 'block',
+                        marginTop: '6px',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {stockQty > selectedMed.quantity
+                        ? `⚠️ Cannot dispense ${stockQty} units (Only ${selectedMed.quantity} units available in inventory).`
+                        : `✓ Available balance: ${selectedMed.quantity} units`}
                     </small>
                   )}
                 </div>
@@ -2118,12 +2277,15 @@ export default function HomePage() {
                 <button
                   type="submit"
                   className="btn-submit-primary"
+                  disabled={stockActionType === 'OUT' && (stockQty > selectedMed.quantity || selectedMed.quantity === 0 || stockQty <= 0)}
                   style={{
                     backgroundColor: stockActionType === 'IN' ? 'var(--lime-accent)' : '#f04438',
                     color: stockActionType === 'IN' ? 'var(--lime-text)' : '#fff',
                   }}
                 >
-                  Confirm Movement
+                  {stockActionType === 'OUT' && stockQty > selectedMed.quantity
+                    ? 'Exceeds Stock Balance'
+                    : 'Confirm Movement'}
                 </button>
               </div>
             </form>
@@ -2185,6 +2347,180 @@ export default function HomePage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DELETE CONFIRMATION (SMOOTH IN-APP MODAL) */}
+      {medToDelete && (
+        <div className="modal-overlay" onClick={() => !isDeleting && setMedToDelete(null)}>
+          <div
+            className="modal-content-box"
+            style={{ maxWidth: '420px', textAlign: 'center', padding: '28px 24px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                width: '56px',
+                height: '56px',
+                background: '#fef3f2',
+                color: '#f04438',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '28px',
+                margin: '0 auto 16px',
+                boxShadow: '0 0 0 8px #fee4e2',
+              }}
+            >
+              🗑️
+            </div>
+
+            <h3 style={{ margin: '0 0 8px', fontSize: '19px', fontWeight: 800, color: '#101828' }}>
+              Delete Medicine?
+            </h3>
+
+            <p style={{ fontSize: '13.5px', color: '#64748b', margin: '0 0 24px', lineHeight: 1.5 }}>
+              Are you sure you want to delete <strong>"{medToDelete.name}"</strong>?
+              <br />
+              <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+                SKU: <code>{medToDelete.sku}</code> — All associated stock movements will also be permanently removed.
+              </span>
+            </p>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ flex: 1, padding: '11px', borderRadius: '10px', fontWeight: 600 }}
+                onClick={() => setMedToDelete(null)}
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-submit-primary"
+                style={{
+                  flex: 1,
+                  padding: '11px',
+                  borderRadius: '10px',
+                  fontWeight: 700,
+                  background: '#f04438',
+                  color: '#fff',
+                  border: 'none',
+                }}
+                onClick={confirmDeleteProduct}
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Deleting...' : 'Delete Product'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: VIEW PRODUCT DETAILS */}
+      {medToView && (
+        <div className="modal-overlay" onClick={() => setMedToView(null)}>
+          <div className="modal-content-box" style={{ maxWidth: '520px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-bar">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div className="brand-icon-box" style={{ width: '28px', height: '28px', fontSize: '14px' }}>💊</div>
+                <h3 style={{ margin: 0, fontSize: '17px' }}>Product Details & Diagnostics</h3>
+              </div>
+              <button className="modal-close-icon" onClick={() => setMedToView(null)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-form-body">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px' }}>
+                <div>
+                  <h2 style={{ margin: '0 0 4px', fontSize: '20px', fontWeight: 800 }}>{medToView.name}</h2>
+                  <div style={{ fontSize: '12px', color: '#64748b' }}>
+                    SKU / Barcode: <code>{medToView.sku}</code>
+                  </div>
+                </div>
+                <span
+                  className={`status-pill ${
+                    medToView.quantity === 0
+                      ? 'out-of-stock'
+                      : medToView.quantity <= medToView.reorderThreshold
+                      ? 'low-stock'
+                      : 'in-stock'
+                  }`}
+                >
+                  {medToView.quantity === 0
+                    ? 'out of stock'
+                    : medToView.quantity <= medToView.reorderThreshold
+                    ? 'low stock'
+                    : 'in stock'}
+                </span>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, 1fr)',
+                  gap: '12px',
+                  background: '#f8fafc',
+                  padding: '16px',
+                  borderRadius: '14px',
+                  border: '1px solid #eaedf2',
+                  fontSize: '13px',
+                }}
+              >
+                <div>Current Stock: <strong>{medToView.quantity} Units</strong></div>
+                <div>Unit Price: <strong>{settings.currency}{Number(medToView.unitPrice).toFixed(2)}</strong></div>
+                <div>Safety Threshold: <strong>{medToView.reorderThreshold} Units</strong></div>
+                <div>Total Inventory Value: <strong>{settings.currency}{(medToView.quantity * Number(medToView.unitPrice)).toFixed(2)}</strong></div>
+                <div>
+                  Expiry Date: <strong>{medToView.expiryDate ? new Date(medToView.expiryDate).toLocaleDateString('en-GB') : 'N/A'}</strong>
+                </div>
+                <div>
+                  Manufacturer: <strong>{medToView.supplier?.name || 'Local Partner'}</strong>
+                </div>
+              </div>
+
+              {medToView.supplier && (
+                <div
+                  style={{
+                    marginTop: '14px',
+                    padding: '12px 14px',
+                    background: '#edf9f4',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    color: '#0b2e25',
+                    border: '1px solid #b8e0d2',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  🏢 <strong>Direct Vendor Account:</strong> {medToView.supplier.name}<br />
+                  ✉️ {medToView.supplier.email || 'N/A'} | 📞 {medToView.supplier.phone || 'N/A'}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer-bar">
+              <button type="button" className="btn-secondary" onClick={() => setMedToView(null)}>
+                Close
+              </button>
+              <button
+                type="button"
+                className="btn-submit-primary"
+                onClick={() => {
+                  setSelectedMed(medToView);
+                  setStockActionType('IN');
+                  setStockQty(10);
+                  setMedToView(null);
+                  setShowStockModal(true);
+                }}
+              >
+                📦 Restock / Dispense
+              </button>
+            </div>
           </div>
         </div>
       )}
